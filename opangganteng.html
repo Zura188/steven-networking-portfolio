@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Merry Christmas</title>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg-deep:#2a0203; --bg-mid:#4a0506; --box:#690a0b; --box-edge:#7e1112; --text:#fff;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%;overflow:hidden;background:#120101;font-family:'Nunito',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
+#stage{
+  position:fixed;top:0;bottom:0;left:50%;width:min(100vw,520px);transform:translateX(-50%);overflow:hidden;
+  background:
+    radial-gradient(ellipse at 50% 45%,rgba(120,10,12,.55),transparent 70%),
+    repeating-linear-gradient(90deg,rgba(0,0,0,.28) 0 6px,rgba(0,0,0,0) 6px 22px),
+    linear-gradient(180deg,#240102,#4a0506 50%,#2a0203);
+}
+#stage::after{ /* vignette */
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(ellipse at center,transparent 45%,rgba(0,0,0,.65) 100%);
+}
+canvas{position:absolute;inset:0;width:100%;height:100%}
+.box{
+  position:absolute;top:0;left:0;
+  width:54%;max-width:300px;aspect-ratio:5/4;
+  display:flex;align-items:center;justify-content:center;
+  padding:18px;text-align:center;
+  background:var(--box);border:1px solid var(--box-edge);
+  box-shadow:0 14px 34px rgba(0,0,0,.4);
+  color:var(--text);font-weight:800;font-size:clamp(16px,4.6vw,21px);line-height:1.3;
+  text-shadow:0 1px 3px rgba(0,0,0,.5);
+  will-change:transform;
+}
+.box .h{visibility:hidden}
+#songbtn{
+  position:absolute;z-index:5;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));
+  font-weight:800;font-size:13px;color:var(--text);cursor:pointer;opacity:.7;
+  padding:8px 14px;border-radius:4px;background:rgba(0,0,0,.35);border:1px solid var(--box-edge);
+}
+#songbtn:hover,#songbtn:focus-within{opacity:1}
+#songbtn input{display:none}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="fx"></canvas>
+  <div id="boxes"></div>
+  <label id="songbtn">&#9835; Pilih lagu<input id="song" type="file" accept="audio/*"></label>
+</div>
+
+<script>
+/* ====== PENGATURAN — ubah di sini ====== */
+const CONFIG = {
+  lineDelay: 4500,   // jeda antar kotak (ms)
+  typeSpeed:  70,     // kecepatan mengetik (ms per huruf)
+  gap: 28,           // jarak antar kotak (px)
+  restartDelay: 3000 // jeda sebelum mengulang dari awal (ms)
+};
+/* Ganti isi array ini dengan lirik lagu kamu, satu baris = satu kotak */
+const LYRICS = [
+  "So what if I call",
+  "And you pick up the phone",
+  "And I use this holiday to make my way to your ghost",
+  "Oh, what if you're lonely",
+  "And you know I am too",
+  "And I get the chance to say",
+  "Merry Christmas, I miss you",
+  "I miss you" 
+];
+/* ====== Mesin animasi ====== */
+const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const stage = document.getElementById('stage');
+const boxesEl = document.getElementById('boxes');
+const cv = document.getElementById('fx');
+const ctx = cv.getContext('2d');
+let W = 0, H = 0, dpr = 1;
+
+function resize(){
+  dpr = Math.min(devicePixelRatio || 1, 2);
+  W = stage.clientWidth; H = stage.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+/* Partikel: pohon Natal jatuh + kilau berlian */
+const particles = [];
+function spawnParticle(initial){
+  const tree = Math.random() < 0.4;
+  particles.push({
+    tree,
+    x: Math.random() * W,
+    y: initial ? Math.random() * H : -20,
+    size: tree ? 11 + Math.random() * 8 : 6 + Math.random() * 16,
+    vy: tree ? 14 + Math.random() * 18 : 4 + Math.random() * 12,
+    vx: (Math.random() - .5) * 8,
+    ph: Math.random() * 6.28,
+    sp: .6 + Math.random() * 1.4
+  });
+}
+const COUNT = reduce ? 18 : 42;
+for(let i = 0; i < COUNT; i++) spawnParticle(true);
+
+function drawSparkle(x, y, s, a){
+  ctx.strokeStyle = 'rgba(255,70,70,' + a + ')';
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(x, y - s);
+  ctx.quadraticCurveTo(x, y, x + s, y);
+  ctx.quadraticCurveTo(x, y, x, y + s);
+  ctx.quadraticCurveTo(x, y, x - s, y);
+  ctx.quadraticCurveTo(x, y, x, y - s);
+  ctx.stroke();
+}
+
+/* Kotak lirik: posisi dihitung dari jam, jadi jarak selalu rata walau FPS turun */
+let boxes = [], idx = 0, step = 260, maxH = 230, baseY = 0, t0 = 0, endAt = 0, started = false, audio = null, timers = [];
+const wait = (fn, ms) => { const t = setTimeout(fn, ms); timers.push(t); };
+
+function measure(){ /* ukur kotak tertinggi supaya jarak antar kotak pasti cukup */
+  const probe = document.createElement('div');
+  probe.className = 'box'; probe.style.visibility = 'hidden';
+  boxesEl.appendChild(probe);
+  maxH = probe.offsetHeight;
+  for(const l of LYRICS){ probe.textContent = l; maxH = Math.max(maxH, probe.offsetHeight); }
+  probe.remove();
+  step = maxH + CONFIG.gap;
+  baseY = Math.max(8, H - maxH - 48);
+}
+
+function addBox(text, i, instant){
+  const el = document.createElement('div');
+  el.className = 'box';
+  el.innerHTML = '<span><span class="t"></span><span class="h"></span></span>';
+  boxesEl.appendChild(el);
+  const w = el.offsetWidth, pad = W * .07;
+  boxes.push({ el, i, x: i % 2 === 0 ? pad : W - w - pad });
+  if(instant) el.querySelector('.t').textContent = text; else type(el, text);
+}
+
+function type(el, text){
+  const t = el.querySelector('.t'), h = el.querySelector('.h');
+  const chars = Array.from(text);
+  let n = 0;
+  (function go(){
+    if(n > chars.length) return;
+    t.textContent = chars.slice(0, n).join('');
+    h.textContent = chars.slice(n).join('');
+    n++;
+    wait(go, CONFIG.typeSpeed);
+  })();
+}
+
+function restart(){
+  timers.forEach(clearTimeout); timers = [];
+  boxesEl.innerHTML = ''; boxes = []; idx = 0; endAt = 0;
+  measure();
+  t0 = performance.now();
+  started = true;
+  if(audio){ audio.currentTime = 0; audio.play().catch(() => {}); }
+}
+
+let last = performance.now(), rt;
+addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(restart, 250); });
+
+function tick(now){
+  const dt = Math.min((now - last) / 1000, .05); last = now;
+
+  ctx.clearRect(0, 0, W, H);
+  for(const p of particles){
+    p.y += p.vy * dt; p.x += p.vx * dt; p.ph += p.sp * dt;
+    if(p.y > H + 24){ p.y = -20; p.x = Math.random() * W; }
+    if(p.tree){
+      ctx.font = p.size + 'px serif';
+      ctx.globalAlpha = .75;
+      ctx.fillText('\u{1F384}', p.x, p.y);
+      ctx.globalAlpha = 1;
+    } else {
+      drawSparkle(p.x, p.y, p.size, .18 + .22 * (.5 + .5 * Math.sin(p.ph)));
+    }
+  }
+
+  if(started){
+    const elapsed = now - t0;
+    while(idx < LYRICS.length && elapsed >= idx * CONFIG.lineDelay){
+      const late = elapsed - idx * CONFIG.lineDelay > CONFIG.lineDelay * 1.5;
+      addBox(LYRICS[idx], idx, late); idx++;
+    }
+    const prog = elapsed / CONFIG.lineDelay;
+    boxes = boxes.filter(b => {
+      const y = baseY - (prog - b.i) * step;
+      if(y < -step){ b.el.remove(); return false; }
+      b.el.style.transform = 'translate(' + b.x + 'px,' + y + 'px)';
+      return true;
+    });
+    if(idx >= LYRICS.length && boxes.length === 0){
+      if(!endAt) endAt = now;
+      else if(now - endAt > CONFIG.restartDelay) restart();
+    }
+  }
+  requestAnimationFrame(tick);
+}
+
+document.getElementById('song').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if(!f) return;
+  if(audio) audio.pause();
+  audio = new Audio(URL.createObjectURL(f));
+  restart();
+});
+
+(document.fonts && document.fonts.ready ? document.fonts.ready : Promise.resolve()).then(() => {
+  restart();
+  requestAnimationFrame(tick);
+});
+</script>
+</body>
+</html>
